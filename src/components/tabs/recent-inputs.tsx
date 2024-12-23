@@ -1,5 +1,6 @@
 // src/TransactionTable.js
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useWebRTC } from "@/hooks/useWebRTC";
 
 type Transaction = {
   signature: string;
@@ -13,6 +14,17 @@ type Transaction = {
 const RecentInputs = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
+  const handleNewTransactions = useCallback((newTransactions: Transaction[]) => {
+    setTransactions(prev => {
+      const combined = [...newTransactions, ...prev];
+      return combined.slice(0, 50); // Keep only last 50
+    });
+  }, []);
+
+  // Use WebRTC for real-time updates
+  useWebRTC(handleNewTransactions);
+
+  // Initial fetch
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
@@ -24,13 +36,7 @@ const RecentInputs = () => {
       }
     };
 
-    // Fetch initially
     fetchTransactions();
-
-    // Poll every 5 seconds
-    const interval = setInterval(fetchTransactions, 5000);
-
-    return () => clearInterval(interval);
   }, []);
 
   const formatTime = (timestamp: number) => {

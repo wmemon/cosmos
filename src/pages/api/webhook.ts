@@ -1,3 +1,5 @@
+import { notifyPeers } from "./rtc-signal";
+
 export const config = {
   runtime: 'edge',
   regions: ['iad1'],
@@ -81,6 +83,14 @@ export default async function handler(req: Request) {
 
       console.log('📊 Current transaction count:', recentTransactions.length);
     });
+
+    // Notify all connected peers about new transactions
+    if (newTransactions.length > 0) {
+      notifyPeers({
+        type: 'new-transactions',
+        transactions: newTransactions
+      });
+    }
 
     console.log('✅ Webhook processed successfully');
     return new Response(JSON.stringify({
