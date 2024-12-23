@@ -1,8 +1,6 @@
-import { notifyClients } from "./transaction-updates";
-
 export const config = {
   runtime: 'edge',
-  regions: ['iad1'], // specify the region you want to deploy to
+  regions: ['iad1'],
 };
 
 type TokenBalanceChange = {
@@ -83,14 +81,6 @@ export default async function handler(req: Request) {
 
       console.log('📊 Current transaction count:', recentTransactions.length);
     });
-
-    // Notify all connected clients about new transactions
-    if (newTransactions.length > 0) {
-      notifyClients({
-        type: 'new-transactions',
-        transactions: newTransactions
-      });
-    }
 
     console.log('✅ Webhook processed successfully');
     return new Response(JSON.stringify({

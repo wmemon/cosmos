@@ -1,6 +1,5 @@
 // src/TransactionTable.js
-import React, { useEffect, useState, useCallback } from "react";
-import { useTransactionUpdates } from "@/hooks/useTransactionUpdates";
+import React, { useEffect, useState } from "react";
 
 type Transaction = {
   signature: string;
@@ -14,18 +13,6 @@ type Transaction = {
 const RecentInputs = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  const handleNewTransactions = useCallback((newTransactions: Transaction[]) => {
-    setTransactions(prev => {
-      const combined = [...newTransactions, ...prev];
-      // Keep only the last 50 transactions
-      return combined.slice(0, 50);
-    });
-  }, []);
-
-  // Use SSE for real-time updates
-  useTransactionUpdates(handleNewTransactions);
-
-  // Initial fetch
   useEffect(() => {
     const fetchTransactions = async () => {
       try {
@@ -37,7 +24,13 @@ const RecentInputs = () => {
       }
     };
 
+    // Fetch initially
     fetchTransactions();
+
+    // Poll every 5 seconds
+    const interval = setInterval(fetchTransactions, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const formatTime = (timestamp: number) => {
