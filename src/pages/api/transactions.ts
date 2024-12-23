@@ -32,33 +32,42 @@ type Transaction = {
 
 async function fetchHeliusTransactions(): Promise<Transaction[]> {
   if (!HELIUS_API_KEY || !TOKEN_ADDRESS) {
-    throw new Error('Missing Helius API key or token address');
+    console.warn('⚠️ Missing Helius API key or token address, returning empty array');
+    return [];
   }
 
-  const response = await fetch(
-    `https://api.helius.xyz/v0/addresses/${TOKEN_ADDRESS}/transactions?api-key=${HELIUS_API_KEY}&limit=50`
-  );
+  try {
+    const response = await fetch(
+      `https://api.helius.xyz/v0/addresses/${TOKEN_ADDRESS}/transactions?api-key=${HELIUS_API_KEY}&limit=50`
+    );
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch from Helius API: ${response.statusText}`);
+    if (!response.ok) {
+      console.error(`❌ Helius API error: ${response.status} ${response.statusText}`);
+      return [];
+    }
+
+    const data = await response.json() as HeliusTransaction[];
+    console.log('📥 Helius API response:', data);
+
+    // Transform Helius data to match our transaction format
+    return data.map((event) => ({
+      signature: event.signature,
+      timestamp: event.timestamp,
+      amount: event.tokenTransfers?.[0]?.tokenAmount || 0,
+      type: event.type,
+      from: event.tokenTransfers?.[0]?.fromUserAccount || "",
+      to: event.tokenTransfers?.[0]?.toUserAccount || "",
+    }));
+  } catch (error) {
+    console.error('❌ Error fetching from Helius:', error);
+    return [];
   }
-
-  const data = await response.json() as HeliusTransaction[];
-  console.log('📥 Helius API response:', data);
-
-  // Transform Helius data to match our transaction format
-  return data.map((event) => ({
-    signature: event.signature,
-    timestamp: event.timestamp,
-    amount: event.tokenTransfers?.[0]?.tokenAmount || 0,
-    type: event.type,
-    from: event.tokenTransfers?.[0]?.fromUserAccount || "",
-    to: event.tokenTransfers?.[0]?.toUserAccount || "",
-  }));
 }
 
 export default async function handler(req: Request) {
   console.log('📊 Transactions endpoint called');
+  const url = new URL(req.url);
+  const type = url.searchParams.get('type');
 
   if (req.method !== "GET") {
     console.log('❌ Invalid method:', req.method);
@@ -71,11 +80,27 @@ export default async function handler(req: Request) {
   }
 
   try {
-    // Get transactions from both sources
-    const [webhookTransactions, heliusTransactions] = await Promise.all([
-      getRecentTransactions(),
-      fetchHeliusTransactions()
-    ]);
+    // Get webhook transactions (recent inputs)
+    const webhookTransactions = getRecentTransactions();
+
+    // If type is 'recent', only return webhook transactions
+    if (type === 'recent') {
+      console.log('✅ Returning recent transactions:', {
+        webhookCount: webhookTransactions.length,
+        timestamp: new Date().toISOString()
+      });
+
+      return new Response(JSON.stringify(webhookTransactions), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        },
+      });
+    }
+
+    // Otherwise, get transactions from both sources for history
+    const heliusTransactions = await fetchHeliusTransactions();
 
     // Combine and deduplicate transactions
     const allTransactions = [...webhookTransactions, ...heliusTransactions];
@@ -86,7 +111,7 @@ export default async function handler(req: Request) {
     // Sort by timestamp, most recent first
     const sortedTransactions = uniqueTransactions.sort((a, b) => b.timestamp - a.timestamp);
 
-    console.log('✅ Returning transactions:', {
+    console.log('✅ Returning all transactions:', {
       webhookCount: webhookTransactions.length,
       heliusCount: heliusTransactions.length,
       totalCount: sortedTransactions.length,

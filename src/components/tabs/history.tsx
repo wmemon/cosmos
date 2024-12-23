@@ -61,12 +61,23 @@ function History() {
     fetchTransactions(true);
 
     // Set up polling with exponential backoff
-    const pollInterval = Math.min(5000 * Math.pow(2, retryCount), 30000); // Max 30s
-    const interval = setInterval(() => {
-      fetchTransactions(false);
-    }, pollInterval);
+    const pollInterval = Math.min(5000 * Math.pow(1.5, retryCount), 30000); // Reduced exponential factor
+    const maxRetries = 5; // Maximum number of retries
 
-    return () => clearInterval(interval);
+    let interval: NodeJS.Timeout;
+    if (retryCount < maxRetries) {
+      interval = setInterval(() => {
+        fetchTransactions(false);
+      }, pollInterval);
+    } else {
+      console.log('🛑 Maximum retries reached, stopping polling');
+    }
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
   }, [fetchTransactions, retryCount]);
 
   const formatTime = useCallback((timestamp: number) => {
@@ -155,14 +166,23 @@ function History() {
     return (
       <div className="flex flex-col items-center justify-center h-48 text-white">
         <p className="text-red-400 mb-4">{error}</p>
-        <p className="text-white-0.4 text-sm mb-4">
-          {retryCount > 0 ? `Retrying in ${Math.min(5 * Math.pow(2, retryCount), 30)} seconds...` : ''}
-        </p>
+        {retryCount > 0 && retryCount < 5 ? (
+          <p className="text-white-0.4 text-sm mb-4">
+            Retrying in {Math.min(5 * Math.pow(1.5, retryCount), 30)} seconds...
+          </p>
+        ) : retryCount >= 5 ? (
+          <p className="text-white-0.4 text-sm mb-4">
+            Maximum retries reached. Please try again later or contact support.
+          </p>
+        ) : null}
         <button 
-          onClick={() => fetchTransactions(true)}
+          onClick={() => {
+            setRetryCount(0);
+            fetchTransactions(true);
+          }}
           className="px-4 py-2 bg-white-0.1 rounded-lg hover:bg-white-0.2 transition-colors"
         >
-          Retry Now
+          Try Again
         </button>
       </div>
     );
@@ -171,7 +191,7 @@ function History() {
   return (
     <div className="flex flex-col gap-2 relative p-2">
       {isPolling && (
-        <div className="absolute top-2 right-4">
+        <div className="absolute top-2 right-4 z-10">
           <div className="flex space-x-1">
             <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
             <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
@@ -179,23 +199,25 @@ function History() {
           </div>
         </div>
       )}
-      {transactions.length === 0 ? (
-        <div className="text-center py-8 text-white-0.4">
-          No transactions yet
-        </div>
-      ) : (
-        transactions.map((transaction) => (
-          <HistoryRow
-            key={transaction.signature}
-            signature={transaction.signature}
-            time={formatTime(transaction.timestamp)}
-            type={transaction.type}
-            amount={transaction.amount}
-            from={transaction.from}
-            to={transaction.to}
-          />
-        ))
-      )}
+      <div className="h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+        {transactions.length === 0 ? (
+          <div className="text-center py-8 text-white-0.4">
+            No transactions yet
+          </div>
+        ) : (
+          transactions.map((transaction) => (
+            <HistoryRow
+              key={transaction.signature}
+              signature={transaction.signature}
+              time={formatTime(transaction.timestamp)}
+              type={transaction.type}
+              amount={transaction.amount}
+              from={transaction.from}
+              to={transaction.to}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }
