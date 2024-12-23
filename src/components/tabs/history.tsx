@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { useWebRTC } from "@/hooks/useWebRTC";
+import { useUpdates } from "@/hooks/useUpdates";
 
 type Transaction = {
   signature: string;
@@ -26,8 +26,8 @@ function History() {
     });
   }, []);
 
-  // Use WebRTC for real-time updates
-  useWebRTC(handleNewTransactions);
+  // Use SSE for real-time updates
+  useUpdates(handleNewTransactions);
 
   // Initial fetch
   useEffect(() => {

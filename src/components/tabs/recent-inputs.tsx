@@ -1,6 +1,6 @@
 // src/TransactionTable.js
 import React, { useEffect, useState, useCallback } from "react";
-import { useWebRTC } from "@/hooks/useWebRTC";
+import { useUpdates } from "@/hooks/useUpdates";
 
 type Transaction = {
   signature: string;
@@ -21,8 +21,8 @@ const RecentInputs = () => {
     });
   }, []);
 
-  // Use WebRTC for real-time updates
-  useWebRTC(handleNewTransactions);
+  // Use SSE for real-time updates
+  useUpdates(handleNewTransactions);
 
   // Initial fetch
   useEffect(() => {
