@@ -1,18 +1,16 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { getRecentTransactions } from "./webhook";
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  console.log('📊 Transactions endpoint called:', {
-    method: req.method,
-    timestamp: new Date().toISOString()
-  });
+export const config = {
+  runtime: 'edge',
+  regions: ['iad1'], // specify the region you want to deploy to
+};
+
+export default async function handler(req: Request) {
+  console.log('📊 Transactions endpoint called');
 
   if (req.method !== "GET") {
     console.log('❌ Invalid method:', req.method);
-    return res.status(405).json({ message: "Method not allowed" });
+    return new Response('Method not allowed', { status: 405 });
   }
 
   try {
@@ -21,9 +19,24 @@ export default async function handler(
       count: transactions.length,
       timestamp: new Date().toISOString()
     });
-    return res.status(200).json(transactions);
+
+    return new Response(JSON.stringify(transactions), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+    });
   } catch (error) {
     console.error("❌ Error fetching transactions:", error);
-    return res.status(500).json({ message: "Internal server error", error: String(error) });
+    return new Response(JSON.stringify({
+      message: "Internal server error",
+      error: String(error)
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
   }
 } 

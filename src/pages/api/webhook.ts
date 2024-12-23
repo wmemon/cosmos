@@ -1,5 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
 import { notifyClients } from "./transaction-updates";
+
+export const config = {
+  runtime: 'edge',
+  regions: ['iad1'], // specify the region you want to deploy to
+};
 
 type TokenBalanceChange = {
   accountIndex: number;
@@ -36,26 +40,19 @@ type Transaction = {
   to: string;
 };
 
-// In-memory storage for recent transactions (last 50)
-const recentTransactions: Transaction[] = [];
+// Store transactions in memory (this will reset on cold starts)
+let recentTransactions: Transaction[] = [];
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  console.log('🌟 Webhook received:', {
-    method: req.method,
-    headers: req.headers,
-    timestamp: new Date().toISOString()
-  });
+export default async function handler(req: Request) {
+  console.log('🌟 Webhook received');
 
   if (req.method !== "POST") {
     console.log('❌ Invalid method:', req.method);
-    return res.status(405).json({ message: "Method not allowed" });
+    return new Response('Method not allowed', { status: 405 });
   }
 
   try {
-    const events = req.body as HeliusEvent[];
+    const events = (await req.json()) as HeliusEvent[];
     console.log('📥 Received events:', JSON.stringify(events, null, 2));
     
     const newTransactions: Transaction[] = [];
@@ -82,10 +79,7 @@ export default async function handler(
       newTransactions.push(transaction);
 
       // Add to recent transactions, keeping only last 50
-      recentTransactions.unshift(transaction);
-      if (recentTransactions.length > 50) {
-        recentTransactions.pop();
-      }
+      recentTransactions = [transaction, ...recentTransactions].slice(0, 50);
 
       console.log('📊 Current transaction count:', recentTransactions.length);
     });
@@ -99,19 +93,32 @@ export default async function handler(
     }
 
     console.log('✅ Webhook processed successfully');
-    return res.status(200).json({ 
+    return new Response(JSON.stringify({
       message: "Webhook processed successfully",
       processedCount: events.length,
       totalStoredTransactions: recentTransactions.length
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
   } catch (error) {
     console.error("❌ Webhook processing error:", error);
-    return res.status(500).json({ message: "Internal server error", error: String(error) });
+    return new Response(JSON.stringify({
+      message: "Internal server error",
+      error: String(error)
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
   }
 }
 
 // API endpoint to get recent transactions
-export const getRecentTransactions = () => {
+export function getRecentTransactions() {
   console.log('📤 Returning transactions:', recentTransactions.length);
   return recentTransactions;
-}; 
+} 

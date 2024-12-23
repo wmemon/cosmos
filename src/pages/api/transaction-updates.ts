@@ -1,4 +1,7 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+export const config = {
+  runtime: 'edge',
+  regions: ['iad1'], // specify the region you want to deploy to
+};
 
 type NotificationData = {
   type: 'new-transactions' | 'connected';
@@ -12,68 +15,50 @@ type NotificationData = {
   }>;
 };
 
-// Store active SSE clients
-const clients = new Set<NextApiResponse>();
+// Store active clients using a Map with ReadableStreamController
+const clients = new Map<string, ReadableStreamDefaultController>();
 
 export function notifyClients(data: NotificationData) {
-  clients.forEach(client => {
+  clients.forEach((controller) => {
     try {
-      client.write(`data: ${JSON.stringify(data)}\n\n`);
+      controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
     } catch (error) {
       console.error('Error notifying client:', error);
-      clients.delete(client);
     }
   });
 }
 
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default async function handler(req: Request) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ message: 'Method not allowed' });
+    return new Response('Method not allowed', { status: 405 });
   }
 
-  // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const stream = new ReadableStream({
+    start(controller) {
+      const clientId = crypto.randomUUID();
+      clients.set(clientId, controller);
 
-  // Set headers for SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
+      // Send initial connection message
+      controller.enqueue(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
 
-  // Ensure the connection stays alive
-  res.flushHeaders();
-
-  // Send initial heartbeat
-  res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
-
-  // Keep the connection alive with periodic heartbeats
-  const heartbeat = setInterval(() => {
-    try {
-      res.write(`: heartbeat\n\n`);
-    } catch (error) {
-      console.error('Heartbeat error:', error);
-      clearInterval(heartbeat);
-      clients.delete(res);
-    }
-  }, 30000); // Send heartbeat every 30 seconds
-
-  // Add client to the Set
-  clients.add(res);
-
-  // Remove client when connection closes
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    clients.delete(res);
+      // Clean up on close
+      req.signal.addEventListener('abort', () => {
+        clients.delete(clientId);
+      });
+    },
+    cancel() {
+      // Clean up will be handled by abort event
+    },
   });
 
-  // Handle connection timeout
-  req.on('timeout', () => {
-    clearInterval(heartbeat);
-    clients.delete(res);
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
   });
 } 
