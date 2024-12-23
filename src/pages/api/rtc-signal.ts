@@ -3,10 +3,24 @@ export const config = {
   regions: ['iad1'],
 };
 
+type NotificationData = {
+  type: 'new-transactions' | 'signal' | 'connected';
+  transactions?: Array<{
+    signature: string;
+    timestamp: number;
+    amount: number;
+    type: string;
+    from: string;
+    to: string;
+  }>;
+  signal?: unknown;
+  peerId?: string;
+};
+
 // Store connected peers
 const peers = new Map<string, ReadableStreamDefaultController>();
 
-export function notifyPeers(data: any) {
+export function notifyPeers(data: NotificationData) {
   peers.forEach((controller) => {
     try {
       controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
@@ -30,7 +44,7 @@ export default async function handler(req: Request) {
   if (req.method === 'POST') {
     try {
       const signal = await req.json();
-      notifyPeers(signal);
+      notifyPeers({ type: 'signal', signal });
       return new Response(JSON.stringify({ success: true }), {
         headers: {
           'Content-Type': 'application/json',
