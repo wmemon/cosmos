@@ -17,11 +17,16 @@ const clients = new Set<NextApiResponse>();
 
 export function notifyClients(data: NotificationData) {
   clients.forEach(client => {
-    client.write(`data: ${JSON.stringify(data)}\n\n`);
+    try {
+      client.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (error) {
+      console.error('Error notifying client:', error);
+      clients.delete(client);
+    }
   });
 }
 
-export default function handler(
+export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
@@ -29,21 +34,46 @@ export default function handler(
     return res.status(405).json({ message: 'Method not allowed' });
   }
 
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   // Set headers for SSE
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-  });
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  // Ensure the connection stays alive
+  res.flushHeaders();
 
   // Send initial heartbeat
-  res.write('data: {"type":"connected"}\n\n');
+  res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+
+  // Keep the connection alive with periodic heartbeats
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(`: heartbeat\n\n`);
+    } catch (error) {
+      console.error('Heartbeat error:', error);
+      clearInterval(heartbeat);
+      clients.delete(res);
+    }
+  }, 30000); // Send heartbeat every 30 seconds
 
   // Add client to the Set
   clients.add(res);
 
   // Remove client when connection closes
   req.on('close', () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+  });
+
+  // Handle connection timeout
+  req.on('timeout', () => {
+    clearInterval(heartbeat);
     clients.delete(res);
   });
 } 
