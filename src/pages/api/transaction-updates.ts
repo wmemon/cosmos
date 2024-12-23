@@ -21,7 +21,7 @@ const clients = new Map<string, ReadableStreamDefaultController>();
 export function notifyClients(data: NotificationData) {
   clients.forEach((controller) => {
     try {
-      controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
     } catch (error) {
       console.error('Error notifying client:', error);
     }
@@ -51,20 +51,29 @@ export default async function handler(req: Request) {
   }
 
   try {
-    // Create and encode the initial message
     const encoder = new TextEncoder();
-    const initialMessage = encoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
-
     const stream = new ReadableStream({
       start: async (controller) => {
         const clientId = crypto.randomUUID();
         clients.set(clientId, controller);
 
-        // Send initial message
-        controller.enqueue(initialMessage);
+        // Send initial connection message
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`));
+
+        // Keep the connection alive with periodic comments
+        const keepAlive = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(`: keepalive\n\n`));
+          } catch (error) {
+            console.error('Keepalive error:', error);
+            clearInterval(keepAlive);
+            clients.delete(clientId);
+          }
+        }, 30000); // Send keepalive every 30 seconds
 
         // Clean up on close
         req.signal.addEventListener('abort', () => {
+          clearInterval(keepAlive);
           clients.delete(clientId);
         });
       },
@@ -82,7 +91,6 @@ export default async function handler(req: Request) {
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
         'X-Accel-Buffering': 'no',
-        'Transfer-Encoding': 'chunked',
       },
     });
   } catch (error) {
