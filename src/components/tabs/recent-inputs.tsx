@@ -13,19 +13,19 @@ type Transaction = {
 
 // Static cache for transactions
 let transactionsCache: Transaction[] = [];
-let pusherInstance: Pusher | null = null;
 
 const RecentInputs = () => {
   const [transactions, setTransactions] = useState<Transaction[]>(transactionsCache);
-  const [isLoading, setIsLoading] = useState(transactionsCache.length === 0);
+  const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pusher] = useState(() => new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+    cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+  }));
 
   const fetchInitialTransactions = useCallback(async () => {
-    // If we have cached data, no need to fetch
     if (transactionsCache.length > 0) {
       setTransactions(transactionsCache);
-      setIsLoading(false);
       return;
     }
 
@@ -40,7 +40,7 @@ const RecentInputs = () => {
         );
       }
       const data = await response.json();
-      transactionsCache = data; // Update cache
+      transactionsCache = data;
       setTransactions(data);
     } catch (error) {
       console.error('Error fetching initial transactions:', error);
@@ -52,44 +52,31 @@ const RecentInputs = () => {
   }, []);
 
   useEffect(() => {
-    // If Pusher is already connected, don't reconnect
-    if (pusherInstance) {
-      console.log('🔌 Reusing existing Pusher connection');
-      return;
-    }
-
     // Initialize Pusher with debug logging
     Pusher.logToConsole = true;
-    console.log('🚀 Initializing Pusher with:', {
-      key: process.env.NEXT_PUBLIC_PUSHER_KEY,
-      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER
-    });
-
-    pusherInstance = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
-      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-    });
+    console.log('🚀 Initializing Pusher connection');
 
     // Subscribe to the transactions channel
     console.log('📡 Subscribing to transactions channel');
-    const channel = pusherInstance.subscribe('transactions');
+    const channel = pusher.subscribe('transactions');
     
     // Handle connection state
-    pusherInstance.connection.bind('connected', () => {
+    pusher.connection.bind('connected', () => {
       console.log('🔌 Pusher connected');
       setIsConnected(true);
       setError(null);
     });
 
-    pusherInstance.connection.bind('connecting', () => {
+    pusher.connection.bind('connecting', () => {
       console.log('🔄 Pusher connecting...');
     });
 
-    pusherInstance.connection.bind('disconnected', () => {
+    pusher.connection.bind('disconnected', () => {
       console.log('🔌 Pusher disconnected');
       setIsConnected(false);
     });
 
-    pusherInstance.connection.bind('error', (err: Error) => {
+    pusher.connection.bind('error', (err: Error) => {
       console.error('❌ Pusher error:', err);
       setError('Connection error occurred');
     });
@@ -97,21 +84,19 @@ const RecentInputs = () => {
     // Listen for new transactions
     channel.bind('new-transaction', (transaction: Transaction) => {
       console.log('📥 New transaction received:', transaction);
-      transactionsCache = [transaction, ...transactionsCache].slice(0, 50); // Update cache
+      transactionsCache = [transaction, ...transactionsCache].slice(0, 50);
       setTransactions(transactionsCache);
     });
 
     // Fetch initial transactions
     fetchInitialTransactions();
 
-    // Cleanup function - but don't disconnect Pusher
+    // Cleanup function
     return () => {
-      if (pusherInstance) {
-        channel.unbind_all();
-        pusherInstance.unsubscribe('transactions');
-      }
+      channel.unbind_all();
+      pusher.unsubscribe('transactions');
     };
-  }, [fetchInitialTransactions]);
+  }, [fetchInitialTransactions, pusher]);
 
   const formatTime = useCallback((timestamp: number) => {
     try {
