@@ -11,7 +11,7 @@ type Transaction = {
 
 export function useTransactionUpdates(onNewTransactions: (transactions: Transaction[]) => void) {
   const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectTimeoutRef = useRef<number | null>(null);
 
   const setupSSE = useCallback(() => {
     // Clean up existing connection if any
@@ -21,7 +21,8 @@ export function useTransactionUpdates(onNewTransactions: (transactions: Transact
 
     // Clear any pending reconnection
     if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
+      window.clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
 
     const eventSource = new EventSource('/api/transaction-updates');
@@ -48,8 +49,9 @@ export function useTransactionUpdates(onNewTransactions: (transactions: Transact
       eventSourceRef.current = null;
 
       // Attempt to reconnect after 5 seconds
-      reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = window.setTimeout(() => {
         console.log('Attempting to reconnect...');
+        reconnectTimeoutRef.current = null;
         setupSSE();
       }, 5000);
     };
@@ -57,7 +59,8 @@ export function useTransactionUpdates(onNewTransactions: (transactions: Transact
     return () => {
       eventSource.close();
       if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
     };
   }, [onNewTransactions]);
@@ -68,6 +71,10 @@ export function useTransactionUpdates(onNewTransactions: (transactions: Transact
       cleanup();
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
     };
   }, [setupSSE]);
