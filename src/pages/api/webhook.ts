@@ -1,9 +1,21 @@
-import { broadcastTransaction } from './websocket';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import Pusher from 'pusher';
 
-export const config = {
-  runtime: 'edge',
-  regions: ['iad1'],
-};
+// Initialize Pusher with debug logging
+console.log('🔧 Initializing Pusher with config:', {
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  cluster: process.env.PUSHER_CLUSTER,
+  useTLS: true
+});
+
+const pusher = new Pusher({
+  appId: process.env.PUSHER_APP_ID!,
+  key: process.env.PUSHER_KEY!,
+  secret: process.env.PUSHER_SECRET!,
+  cluster: process.env.PUSHER_CLUSTER!,
+  useTLS: true,
+});
 
 type TokenBalanceChange = {
   accountIndex: number;
@@ -43,22 +55,25 @@ type Transaction = {
 // Store transactions in memory (this will reset on cold starts)
 let recentTransactions: Transaction[] = [];
 
-export default async function handler(req: Request) {
-  console.log('🌟 Webhook received');
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  console.log('📥 Webhook received');
 
   if (req.method !== "POST") {
     console.log('❌ Invalid method:', req.method);
-    return new Response('Method not allowed', { status: 405 });
+    return res.status(405).json({ message: 'Method not allowed' });
   }
 
   try {
-    const events = (await req.json()) as HeliusEvent[];
+    const events = req.body as HeliusEvent[];
     console.log('📥 Received events:', JSON.stringify(events, null, 2));
     
     const newTransactions: Transaction[] = [];
     
-    events.forEach((event, index) => {
-      console.log(`\n🔄 Processing event ${index + 1}/${events.length}`);
+    for (const event of events) {
+      console.log(`\n🔄 Processing event`);
       console.log('📝 Event details:', {
         signature: event.signature,
         type: event.type,
@@ -81,33 +96,34 @@ export default async function handler(req: Request) {
       // Add to recent transactions, keeping only last 50
       recentTransactions = [transaction, ...recentTransactions].slice(0, 50);
 
-      // Broadcast to all connected WebSocket clients
-      broadcastTransaction(transaction);
-
-      console.log('📊 Current transaction count:', recentTransactions.length);
-    });
+      // Broadcast via Pusher
+      try {
+        console.log('📤 Broadcasting transaction via Pusher:', {
+          channel: 'transactions',
+          event: 'new-transaction',
+          data: transaction
+        });
+        await pusher.trigger('transactions', 'new-transaction', transaction);
+        console.log('📢 Transaction broadcasted successfully');
+      } catch (error) {
+        console.error('❌ Error broadcasting via Pusher:', error);
+        if (error instanceof Error) {
+          console.error('Error details:', error.message);
+        }
+      }
+    }
 
     console.log('✅ Webhook processed successfully');
-    return new Response(JSON.stringify({
+    return res.status(200).json({
       message: "Webhook processed successfully",
       processedCount: events.length,
       totalStoredTransactions: recentTransactions.length
-    }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-      },
     });
   } catch (error) {
     console.error("❌ Webhook processing error:", error);
-    return new Response(JSON.stringify({
+    return res.status(500).json({
       message: "Internal server error",
       error: String(error)
-    }), {
-      status: 500,
-      headers: {
-        'Content-Type': 'application/json',
-      },
     });
   }
 }

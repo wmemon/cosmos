@@ -1,5 +1,6 @@
 // src/TransactionTable.js
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import Pusher from 'pusher-js';
 
 type Transaction = {
   signature: string;
@@ -15,43 +16,6 @@ const RecentInputs = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-
-  const connectWebSocket = useCallback(() => {
-    try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/websocket`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('🔌 WebSocket connected');
-        setIsConnected(true);
-        setError(null);
-      };
-
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        if (message.type === 'transaction') {
-          setTransactions(prev => [message.data, ...prev].slice(0, 50));
-        }
-      };
-
-      ws.onclose = () => {
-        console.log('🔌 WebSocket disconnected');
-        setIsConnected(false);
-        // Try to reconnect after 5 seconds
-        setTimeout(connectWebSocket, 5000);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setError('Failed to connect to WebSocket');
-      };
-    } catch (error) {
-      console.error('Error connecting to WebSocket:', error);
-      setError('Failed to connect to WebSocket');
-    }
-  }, []);
 
   const fetchInitialTransactions = useCallback(async () => {
     try {
@@ -76,17 +40,58 @@ const RecentInputs = () => {
   }, []);
 
   useEffect(() => {
-    // Initial fetch and WebSocket connection
+    // Initialize Pusher with debug logging
+    Pusher.logToConsole = true;
+    console.log('🚀 Initializing Pusher with:', {
+      key: process.env.NEXT_PUBLIC_PUSHER_KEY,
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER
+    });
+
+    const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+    });
+
+    // Subscribe to the transactions channel
+    console.log('📡 Subscribing to transactions channel');
+    const channel = pusher.subscribe('transactions');
+    
+    // Handle connection state
+    pusher.connection.bind('connected', () => {
+      console.log('🔌 Pusher connected');
+      setIsConnected(true);
+      setError(null);
+    });
+
+    pusher.connection.bind('connecting', () => {
+      console.log('🔄 Pusher connecting...');
+    });
+
+    pusher.connection.bind('disconnected', () => {
+      console.log('🔌 Pusher disconnected');
+      setIsConnected(false);
+    });
+
+    pusher.connection.bind('error', (err: Error) => {
+      console.error('❌ Pusher error:', err);
+      setError('Connection error occurred');
+    });
+
+    // Listen for new transactions
+    channel.bind('new-transaction', (transaction: Transaction) => {
+      console.log('📥 New transaction received:', transaction);
+      setTransactions(prev => [transaction, ...prev].slice(0, 50));
+    });
+
+    // Fetch initial transactions
     fetchInitialTransactions();
-    connectWebSocket();
 
     // Cleanup
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      channel.unbind_all();
+      pusher.unsubscribe('transactions');
+      pusher.disconnect();
     };
-  }, [fetchInitialTransactions, connectWebSocket]);
+  }, [fetchInitialTransactions]);
 
   const formatTime = useCallback((timestamp: number) => {
     try {
@@ -141,10 +146,7 @@ const RecentInputs = () => {
       <div className="flex flex-col items-center justify-center h-48 text-white">
         <p className="text-red-400 mb-4">{error}</p>
         <button 
-          onClick={() => {
-            fetchInitialTransactions();
-            connectWebSocket();
-          }}
+          onClick={fetchInitialTransactions}
           className="px-4 py-2 bg-white-0.1 rounded-lg hover:bg-white-0.2 transition-colors"
         >
           Try Again
