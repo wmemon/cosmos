@@ -1,5 +1,5 @@
 // src/TransactionTable.js
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 
 type Transaction = {
   signature: string;
@@ -13,17 +13,49 @@ type Transaction = {
 const RecentInputs = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const fetchTransactions = useCallback(async (isInitial = false) => {
+  const connectWebSocket = useCallback(() => {
     try {
-      if (isInitial) {
-        setIsLoading(true);
-      } else {
-        setIsPolling(true);
-      }
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/websocket`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('🔌 WebSocket connected');
+        setIsConnected(true);
+        setError(null);
+      };
+
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === 'transaction') {
+          setTransactions(prev => [message.data, ...prev].slice(0, 50));
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('🔌 WebSocket disconnected');
+        setIsConnected(false);
+        // Try to reconnect after 5 seconds
+        setTimeout(connectWebSocket, 5000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setError('Failed to connect to WebSocket');
+      };
+    } catch (error) {
+      console.error('Error connecting to WebSocket:', error);
+      setError('Failed to connect to WebSocket');
+    }
+  }, []);
+
+  const fetchInitialTransactions = useCallback(async () => {
+    try {
+      setIsLoading(true);
       setError(null);
 
       const response = await fetch('/api/transactions?type=recent');
@@ -34,32 +66,27 @@ const RecentInputs = () => {
       }
       const data = await response.json();
       setTransactions(data);
-      setRetryCount(0); // Reset retry count on successful fetch
     } catch (error) {
-      console.error('Error fetching transactions:', error);
+      console.error('Error fetching initial transactions:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setError(`Failed to load transactions: ${errorMessage}`);
-      
-      // Increment retry count
-      setRetryCount((prev) => prev + 1);
     } finally {
       setIsLoading(false);
-      setIsPolling(false);
     }
   }, []);
 
   useEffect(() => {
-    // Initial fetch
-    fetchTransactions(true);
+    // Initial fetch and WebSocket connection
+    fetchInitialTransactions();
+    connectWebSocket();
 
-    // Set up polling with exponential backoff
-    const pollInterval = Math.min(5000 * Math.pow(2, retryCount), 30000); // Max 30s
-    const interval = setInterval(() => {
-      fetchTransactions(false);
-    }, pollInterval);
-
-    return () => clearInterval(interval);
-  }, [fetchTransactions, retryCount]);
+    // Cleanup
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [fetchInitialTransactions, connectWebSocket]);
 
   const formatTime = useCallback((timestamp: number) => {
     try {
@@ -113,14 +140,14 @@ const RecentInputs = () => {
     return (
       <div className="flex flex-col items-center justify-center h-48 text-white">
         <p className="text-red-400 mb-4">{error}</p>
-        <p className="text-white-0.4 text-sm mb-4">
-          {retryCount > 0 ? `Retrying in ${Math.min(5 * Math.pow(2, retryCount), 30)} seconds...` : ''}
-        </p>
         <button 
-          onClick={() => fetchTransactions(true)}
+          onClick={() => {
+            fetchInitialTransactions();
+            connectWebSocket();
+          }}
           className="px-4 py-2 bg-white-0.1 rounded-lg hover:bg-white-0.2 transition-colors"
         >
-          Retry Now
+          Try Again
         </button>
       </div>
     );
@@ -129,12 +156,10 @@ const RecentInputs = () => {
   return (
     <div className="p-2">
       <div className="overflow-x-auto relative">
-        {isPolling && (
+        {!isConnected && (
           <div className="absolute top-0 right-0 mr-4 mt-2 z-10">
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
-              <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-              <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+            <div className="px-2 py-1 bg-yellow-500 text-black text-sm rounded-full">
+              Reconnecting...
             </div>
           </div>
         )}

@@ -1,3 +1,5 @@
+import { broadcastTransaction } from './websocket';
+
 export const config = {
   runtime: 'edge',
   regions: ['iad1'],
@@ -78,6 +80,9 @@ export default async function handler(req: Request) {
 
       // Add to recent transactions, keeping only last 50
       recentTransactions = [transaction, ...recentTransactions].slice(0, 50);
+
+      // Broadcast to all connected WebSocket clients
+      broadcastTransaction(transaction);
 
       console.log('📊 Current transaction count:', recentTransactions.length);
     });
