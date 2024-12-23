@@ -1,6 +1,6 @@
 export const config = {
   runtime: 'edge',
-  regions: ['iad1'], // specify the region you want to deploy to
+  regions: ['iad1'],
 };
 
 type NotificationData = {
@@ -29,36 +29,69 @@ export function notifyClients(data: NotificationData) {
 }
 
 export default async function handler(req: Request) {
-  if (req.method !== 'GET') {
-    return new Response('Method not allowed', { status: 405 });
+  // Handle preflight requests for CORS
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
   }
 
-  const stream = new ReadableStream({
-    start(controller) {
-      const clientId = crypto.randomUUID();
-      clients.set(clientId, controller);
+  if (req.method !== 'GET') {
+    return new Response('Method not allowed', { 
+      status: 405,
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+    });
+  }
 
-      // Send initial connection message
-      controller.enqueue(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+  try {
+    // Create and encode the initial message
+    const encoder = new TextEncoder();
+    const initialMessage = encoder.encode(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
 
-      // Clean up on close
-      req.signal.addEventListener('abort', () => {
-        clients.delete(clientId);
-      });
-    },
-    cancel() {
-      // Clean up will be handled by abort event
-    },
-  });
+    const stream = new ReadableStream({
+      start: async (controller) => {
+        const clientId = crypto.randomUUID();
+        clients.set(clientId, controller);
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
+        // Send initial message
+        controller.enqueue(initialMessage);
+
+        // Clean up on close
+        req.signal.addEventListener('abort', () => {
+          clients.delete(clientId);
+        });
+      },
+      cancel() {
+        // Cleanup will be handled by abort event
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'X-Accel-Buffering': 'no',
+        'Transfer-Encoding': 'chunked',
+      },
+    });
+  } catch (error) {
+    console.error('SSE Setup Error:', error);
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+  }
 } 
