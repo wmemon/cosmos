@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { notifyClients } from "./transaction-updates";
 
 type TokenBalanceChange = {
   accountIndex: number;
@@ -57,6 +58,8 @@ export default async function handler(
     const events = req.body as HeliusEvent[];
     console.log('📥 Received events:', JSON.stringify(events, null, 2));
     
+    const newTransactions: Transaction[] = [];
+    
     events.forEach((event, index) => {
       console.log(`\n🔄 Processing event ${index + 1}/${events.length}`);
       console.log('📝 Event details:', {
@@ -76,6 +79,7 @@ export default async function handler(
       };
 
       console.log('💾 Processed transaction:', transaction);
+      newTransactions.push(transaction);
 
       // Add to recent transactions, keeping only last 50
       recentTransactions.unshift(transaction);
@@ -85,6 +89,14 @@ export default async function handler(
 
       console.log('📊 Current transaction count:', recentTransactions.length);
     });
+
+    // Notify all connected clients about new transactions
+    if (newTransactions.length > 0) {
+      notifyClients({
+        type: 'new-transactions',
+        transactions: newTransactions
+      });
+    }
 
     console.log('✅ Webhook processed successfully');
     return res.status(200).json({ 
