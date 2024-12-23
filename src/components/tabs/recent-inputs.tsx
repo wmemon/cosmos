@@ -1,22 +1,65 @@
 // src/TransactionTable.js
-import React from "react";
+import React, { useEffect, useState } from "react";
 
-const transactions = [
-  { time: "2m ago", from: "helH..jwYb", amount: 0.87 },
-  { time: "2m ago", from: "xewQ..MNae", amount: 12.45 },
-  { time: "2m ago", from: "HYeg..L0pm", amount: 9.87 },
-  { time: "4m ago", from: "NHfw..Auuw", amount: 1.24 },
-  { time: "5m ago", from: "ndhy..QAsw", amount: 15.01 },
-  { time: "6m ago", from: "MKjn..wsjU", amount: 0.07 },
-];
+type Transaction = {
+  signature: string;
+  timestamp: number;
+  amount: number;
+  type: string;
+  from: string;
+  to: string;
+};
 
 const RecentInputs = () => {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  useEffect(() => {
+    const fetchTransactions = async () => {
+      try {
+        const response = await fetch('/api/transactions');
+        const data = await response.json();
+        setTransactions(data);
+      } catch (error) {
+        console.error('Error fetching transactions:', error);
+      }
+    };
+
+    // Fetch initially
+    fetchTransactions();
+
+    // Poll every 30 seconds for new transactions
+    const interval = setInterval(fetchTransactions, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTime = (timestamp: number) => {
+    const now = Date.now();
+    const diff = now - timestamp * 1000; // Convert to milliseconds
+    const minutes = Math.floor(diff / 60000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes === 1) return '1m ago';
+    if (minutes < 60) return `${minutes}m ago`;
+    
+    const hours = Math.floor(minutes / 60);
+    if (hours === 1) return '1h ago';
+    if (hours < 24) return `${hours}h ago`;
+    
+    return new Date(timestamp * 1000).toLocaleDateString();
+  };
+
+  const shortenAddress = (address: string) => {
+    if (!address) return '';
+    return `${address.slice(0, 4)}..${address.slice(-4)}`;
+  };
+
   return (
     <div>
       <div className="overflow-x-auto">
         <table className="w-full p-1">
           <thead>
-            <tr className="font-bold text-white tracking-[2.5%] text-xl leading-5 ">
+            <tr className="font-bold text-white tracking-[2.5%] text-xl leading-5">
               <th scope="col" className="text-left pl-4">
                 Time
               </th>
@@ -29,13 +72,20 @@ const RecentInputs = () => {
             </tr>
           </thead>
           <tbody>
-            {transactions.map((transaction, index) => (
-              <tr key={index} className="text-white tracking-[2.5%] text-xl leading-5">
-                <td className="pl-4 py-4">{transaction.time}</td>
+            {transactions.map((transaction) => (
+              <tr 
+                key={transaction.signature} 
+                className="text-white tracking-[2.5%] text-xl leading-5"
+              >
+                <td className="pl-4 py-4">{formatTime(transaction.timestamp)}</td>
                 <td className="py-4">
-                  <span className="px-2 rounded-[100px] bg-white-0.09">{transaction.from}</span>
+                  <span className="px-2 rounded-[100px] bg-white-0.09">
+                    {shortenAddress(transaction.from)}
+                  </span>
                 </td>
-                <td className="text-right py-4 pr-4">{transaction.amount}</td>
+                <td className="text-right py-4 pr-4">
+                  {transaction.amount.toFixed(2)}
+                </td>
               </tr>
             ))}
           </tbody>
