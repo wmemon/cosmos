@@ -11,13 +11,24 @@ type Transaction = {
   to: string;
 };
 
+// Static cache for transactions
+let transactionsCache: Transaction[] = [];
+let pusherInstance: Pusher | null = null;
+
 const RecentInputs = () => {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [transactions, setTransactions] = useState<Transaction[]>(transactionsCache);
+  const [isLoading, setIsLoading] = useState(transactionsCache.length === 0);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchInitialTransactions = useCallback(async () => {
+    // If we have cached data, no need to fetch
+    if (transactionsCache.length > 0) {
+      setTransactions(transactionsCache);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
       setError(null);
@@ -29,6 +40,7 @@ const RecentInputs = () => {
         );
       }
       const data = await response.json();
+      transactionsCache = data; // Update cache
       setTransactions(data);
     } catch (error) {
       console.error('Error fetching initial transactions:', error);
@@ -40,6 +52,12 @@ const RecentInputs = () => {
   }, []);
 
   useEffect(() => {
+    // If Pusher is already connected, don't reconnect
+    if (pusherInstance) {
+      console.log('🔌 Reusing existing Pusher connection');
+      return;
+    }
+
     // Initialize Pusher with debug logging
     Pusher.logToConsole = true;
     console.log('🚀 Initializing Pusher with:', {
@@ -47,31 +65,31 @@ const RecentInputs = () => {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER
     });
 
-    const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+    pusherInstance = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
     });
 
     // Subscribe to the transactions channel
     console.log('📡 Subscribing to transactions channel');
-    const channel = pusher.subscribe('transactions');
+    const channel = pusherInstance.subscribe('transactions');
     
     // Handle connection state
-    pusher.connection.bind('connected', () => {
+    pusherInstance.connection.bind('connected', () => {
       console.log('🔌 Pusher connected');
       setIsConnected(true);
       setError(null);
     });
 
-    pusher.connection.bind('connecting', () => {
+    pusherInstance.connection.bind('connecting', () => {
       console.log('🔄 Pusher connecting...');
     });
 
-    pusher.connection.bind('disconnected', () => {
+    pusherInstance.connection.bind('disconnected', () => {
       console.log('🔌 Pusher disconnected');
       setIsConnected(false);
     });
 
-    pusher.connection.bind('error', (err: Error) => {
+    pusherInstance.connection.bind('error', (err: Error) => {
       console.error('❌ Pusher error:', err);
       setError('Connection error occurred');
     });
@@ -79,17 +97,19 @@ const RecentInputs = () => {
     // Listen for new transactions
     channel.bind('new-transaction', (transaction: Transaction) => {
       console.log('📥 New transaction received:', transaction);
-      setTransactions(prev => [transaction, ...prev].slice(0, 50));
+      transactionsCache = [transaction, ...transactionsCache].slice(0, 50); // Update cache
+      setTransactions(transactionsCache);
     });
 
     // Fetch initial transactions
     fetchInitialTransactions();
 
-    // Cleanup
+    // Cleanup function - but don't disconnect Pusher
     return () => {
-      channel.unbind_all();
-      pusher.unsubscribe('transactions');
-      pusher.disconnect();
+      if (pusherInstance) {
+        channel.unbind_all();
+        pusherInstance.unsubscribe('transactions');
+      }
     };
   }, [fetchInitialTransactions]);
 
@@ -97,21 +117,36 @@ const RecentInputs = () => {
     try {
       const now = Date.now();
       const diff = now - timestamp * 1000;
-      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor(diff / 1000);
       
-      if (minutes < 1) return 'Just now';
-      if (minutes === 1) return '1m ago';
-      if (minutes < 60) return `${minutes}m ago`;
+      if (seconds < 60) return 'Just now';
+      
+      const minutes = Math.floor(seconds / 60);
+      if (minutes === 1) return '1 minute ago';
+      if (minutes < 60) return `${minutes} minutes ago`;
       
       const hours = Math.floor(minutes / 60);
-      if (hours === 1) return '1h ago';
-      if (hours < 24) return `${hours}h ago`;
+      if (hours === 1) return '1 hour ago';
+      if (hours < 24) return `${hours} hours ago`;
+      
+      const days = Math.floor(hours / 24);
+      if (days === 1) return '1 day ago';
+      if (days < 7) return `${days} days ago`;
       
       return new Date(timestamp * 1000).toLocaleDateString();
     } catch (error) {
       console.error('Error formatting time:', error);
       return 'Invalid time';
     }
+  }, []);
+
+  // Update times every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTransactions([...transactionsCache]); // Force re-render to update times
+    }, 60000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const shortenAddress = useCallback((address: string) => {
